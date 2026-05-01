@@ -1,7 +1,16 @@
 import { cacheGet, cacheSet } from "./redis";
-import type { OFFProduct, OFFSearchResponse } from "./types";
+import type {
+  NutriScoreGrade,
+  OFFNutriments,
+  OFFProduct,
+  OFFSearchResponse,
+} from "./types";
 
-const BASE_URL = "https://world.openfoodfacts.org";
+// world.openfoodfacts.org is used for single-product (barcode) lookups.
+// Free-text search lives on search-a-licious (search.openfoodfacts.org) — the v2 /api/v2/search
+// endpoint silently ignores `search_terms` and returns the unfiltered global set, so we can't use it.
+const PRODUCT_API_URL = "https://world.openfoodfacts.org";
+const SEARCH_API_URL = "https://search.openfoodfacts.org";
 const CACHE_TTL_SECONDS = 60 * 30;
 const DEFAULT_PAGE_SIZE = 24;
 const MAX_RETRIES = 2;
@@ -73,7 +82,65 @@ export interface SearchResult {
   error: SearchError;
 }
 
-// Soft-fails to an empty result so the discover grid stays usable when OFF is rate-limiting or 5xx-ing.
+// search-a-licious response shape — fields differ from OFF v2 (`hits` not `products`,
+// `brands` is an array, no `ingredients_text` by default).
+interface SalHit {
+  code: string;
+  product_name?: string;
+  brands?: string[] | string;
+  image_url?: string;
+  nutriscore_grade?: string;
+  categories_tags?: string[];
+  nutriments?: OFFNutriments;
+  ingredients_text?: string;
+}
+
+interface SalResponse {
+  hits?: SalHit[];
+  count?: number;
+  page?: number;
+  page_size?: number;
+  page_count?: number;
+}
+
+function mapHitToProduct(h: SalHit): OFFProduct {
+  return {
+    code: h.code,
+    product_name: h.product_name,
+    brands: Array.isArray(h.brands) ? h.brands.join(", ") : h.brands,
+    image_url: h.image_url,
+    nutriscore_grade: h.nutriscore_grade as NutriScoreGrade | undefined,
+    categories_tags: h.categories_tags,
+    nutriments: h.nutriments,
+    ingredients_text: h.ingredients_text,
+  };
+}
+
+// search-a-licious requires either `q` or `sort_by`. Combine free-text and category into a single
+// Lucene-style query, and fall back to popularity sort when no filters are provided.
+function buildSearchParams(
+  q: string | undefined,
+  category: string | undefined,
+  page: number,
+  pageSize: number,
+): URLSearchParams {
+  const params = new URLSearchParams();
+  const parts: string[] = [];
+  if (q) parts.push(q);
+  if (category) parts.push(`categories_tags:"en:${category}"`);
+
+  if (parts.length > 0) {
+    params.set("q", parts.join(" "));
+  } else {
+    params.set("sort_by", "popularity_key");
+  }
+  params.set("page", String(page));
+  params.set("page_size", String(pageSize));
+  params.set("fields", PRODUCT_FIELDS);
+  return params;
+}
+
+// Soft-fails to an empty result so the discover grid stays usable when search is rate-limiting or 5xx-ing.
 // The `error` discriminator lets callers distinguish a real empty result from an upstream failure
 // (so the UI can offer a Retry instead of "No products found").
 // Only successful responses are cached — failure paths intentionally bypass cacheSet.
@@ -83,21 +150,16 @@ export async function searchProducts({
   page = 1,
   pageSize = DEFAULT_PAGE_SIZE,
 }: SearchProductsOptions = {}): Promise<SearchResult> {
-  const cacheKey = `off:search:v1:${q ?? ""}:${category ?? ""}:${page}:${pageSize}`;
+  // Cache key version bumped to v2 — v1 entries were poisoned by the broken /api/v2/search endpoint.
+  const cacheKey = `off:search:v2:${q ?? ""}:${category ?? ""}:${page}:${pageSize}`;
   const cached = await cacheGet<OFFSearchResponse>(cacheKey);
   if (cached) return { data: cached.v, error: null };
 
-  const params = new URLSearchParams();
-  if (q) params.set("search_terms", q);
-  if (category) params.set("categories_tags_en", category);
-  params.set("page", String(page));
-  params.set("page_size", String(pageSize));
-  params.set("fields", PRODUCT_FIELDS);
-
+  const params = buildSearchParams(q, category, page, pageSize);
   const empty = { ...EMPTY_SEARCH, page, page_size: pageSize };
 
   try {
-    const res = await fetchOFF(`${BASE_URL}/api/v2/search?${params.toString()}`, {
+    const res = await fetchOFF(`${SEARCH_API_URL}/search?${params.toString()}`, {
       headers: OFF_HEADERS,
       cache: "no-store",
     });
@@ -113,7 +175,13 @@ export async function searchProducts({
       );
     }
 
-    const data = (await res.json()) as OFFSearchResponse;
+    const sal = (await res.json()) as SalResponse;
+    const data: OFFSearchResponse = {
+      count: sal.count ?? 0,
+      page: sal.page ?? page,
+      page_size: sal.page_size ?? pageSize,
+      products: (sal.hits ?? []).map(mapHitToProduct),
+    };
     await cacheSet(cacheKey, data, CACHE_TTL_SECONDS);
     return { data, error: null };
   } catch (err) {
@@ -137,7 +205,7 @@ export async function getProduct(barcode: string): Promise<OFFProduct | null> {
   if (cached) return cached.v;
 
   const params = new URLSearchParams({ fields: PRODUCT_FIELDS });
-  const url = `${BASE_URL}/api/v2/product/${encodeURIComponent(
+  const url = `${PRODUCT_API_URL}/api/v2/product/${encodeURIComponent(
     barcode,
   )}.json?${params.toString()}`;
 
