@@ -5,7 +5,8 @@ const REVALIDATE_SECONDS = 3600;
 const DEFAULT_PAGE_SIZE = 24;
 
 const OFF_HEADERS = {
-  "User-Agent": "FreshNexus/0.1 (https://github.com/freshnexus)",
+  "User-Agent":
+    "FreshNexus/0.1 (https://github.com/akash0391/freshnexus-webapp-challenge; theakashyadav.dev@gmail.com)",
 };
 
 const PRODUCT_FIELDS = [
