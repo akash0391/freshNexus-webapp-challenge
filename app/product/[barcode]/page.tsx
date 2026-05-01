@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
-import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { IngredientList } from "@/components/IngredientList";
 import { Nutriments } from "@/components/Nutriments";
+import { ProductImage } from "@/components/ProductImage";
 import { NUTRISCORE_STYLES, nutriScoreLabel } from "@/lib/nutriscore";
 import { getProduct } from "@/lib/openFoodFacts";
 import type { OFFProduct } from "@/lib/types";
@@ -90,20 +90,13 @@ export default async function ProductPage({ params }: Props) {
 
       <header className="flex flex-col gap-6 sm:flex-row">
         <div className="relative aspect-square w-full max-w-xs flex-shrink-0 overflow-hidden rounded-lg border border-black/10 bg-zinc-50 dark:border-white/10 dark:bg-zinc-800">
-          {product.image_url ? (
-            <Image
-              src={product.image_url}
-              alt={name}
-              fill
-              priority
-              sizes="(min-width: 640px) 320px, 100vw"
-              className="object-contain p-3"
-            />
-          ) : (
-            <div className="flex h-full w-full items-center justify-center text-xs text-zinc-500">
-              No image
-            </div>
-          )}
+          <ProductImage
+            src={product.image_url}
+            alt={name}
+            priority
+            sizes="(min-width: 640px) 320px, 100vw"
+            className="object-contain p-3"
+          />
         </div>
         <div className="flex flex-1 flex-col gap-3">
           <h1 className="text-3xl font-semibold tracking-tight">{name}</h1>

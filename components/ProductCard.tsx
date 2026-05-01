@@ -1,7 +1,7 @@
-import Image from "next/image";
 import Link from "next/link";
 import { NUTRISCORE_STYLES, nutriScoreLabel } from "@/lib/nutriscore";
 import type { NutriScoreGrade, OFFProduct } from "@/lib/types";
+import { ProductImage } from "./ProductImage";
 
 function NutriScoreBadge({ grade }: { grade?: NutriScoreGrade }) {
   const { grade: resolved, label } = nutriScoreLabel(grade);
@@ -24,19 +24,12 @@ export function ProductCard({ product }: { product: OFFProduct }) {
     <article className="group flex flex-col rounded-lg border border-black/10 bg-white overflow-hidden transition hover:shadow-md dark:border-white/10 dark:bg-zinc-900">
       <Link href={`/product/${product.code}`} className="flex flex-col h-full">
         <div className="relative aspect-square bg-zinc-50 dark:bg-zinc-800">
-          {product.image_url ? (
-            <Image
-              src={product.image_url}
-              alt={name}
-              fill
-              sizes="(min-width: 1024px) 25vw, (min-width: 640px) 50vw, 100vw"
-              className="object-contain p-2"
-            />
-          ) : (
-            <div className="flex h-full w-full items-center justify-center text-xs text-zinc-500">
-              No image
-            </div>
-          )}
+          <ProductImage
+            src={product.image_url}
+            alt={name}
+            sizes="(min-width: 1024px) 25vw, (min-width: 640px) 50vw, 100vw"
+            className="object-contain p-2"
+          />
         </div>
         <div className="flex flex-1 flex-col gap-1 p-3">
           <div className="flex items-start justify-between gap-2">

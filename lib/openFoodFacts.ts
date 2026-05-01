@@ -101,6 +101,8 @@ interface SalResponse {
   page?: number;
   page_size?: number;
   page_count?: number;
+  // search-a-licious caps `count` at 10,000 and sets this to false when truncated.
+  is_count_exact?: boolean;
 }
 
 function mapHitToProduct(h: SalHit): OFFProduct {
@@ -108,13 +110,21 @@ function mapHitToProduct(h: SalHit): OFFProduct {
     code: h.code,
     product_name: h.product_name,
     brands: Array.isArray(h.brands) ? h.brands.join(", ") : h.brands,
-    image_url: h.image_url,
+    image_url: normalizeImageUrl(h.image_url),
     nutriscore_grade: h.nutriscore_grade as NutriScoreGrade | undefined,
     categories_tags: h.categories_tags,
     nutriments: h.nutriments,
     ingredients_text: h.ingredients_text,
   };
 }
+
+// Empty-state-only quality clause: popularity_key alone surfaces synthetic test entries with
+// fake short barcodes (679, 959, ...) whose advertised images don't exist on any OFF host. We
+// only inject this when the user hasn't typed anything and hasn't picked a category — once a
+// real filter is in play we honour it exactly so search/category results are not silently
+// narrowed.
+const EMPTY_STATE_QUALITY_FILTER =
+  'states_tags:"en:front-photo-selected" AND states_tags:"en:product-name-completed"';
 
 // search-a-licious requires either `q` or `sort_by`. Combine free-text and category into a single
 // Lucene-style query, and fall back to popularity sort when no filters are provided.
@@ -130,14 +140,26 @@ function buildSearchParams(
   if (category) parts.push(`categories_tags:"en:${category}"`);
 
   if (parts.length > 0) {
-    params.set("q", parts.join(" "));
+    params.set("q", parts.join(" AND "));
   } else {
+    params.set("q", EMPTY_STATE_QUALITY_FILTER);
     params.set("sort_by", "popularity_key");
   }
   params.set("page", String(page));
   params.set("page_size", String(pageSize));
   params.set("fields", PRODUCT_FIELDS);
   return params;
+}
+
+// images.openfoodfacts.org has unreliable IPv4 routing from many networks (including Vercel's
+// edge). The same images are served from world.openfoodfacts.org under the identical /images/
+// path, so we rewrite hosts at the boundary to keep <Image> requests on a reachable origin.
+function normalizeImageUrl(url: string | undefined): string | undefined {
+  if (!url) return url;
+  return url.replace(
+    /^https?:\/\/(?:images|static)\.openfoodfacts\.org\//,
+    "https://world.openfoodfacts.org/",
+  );
 }
 
 // Soft-fails to an empty result so the discover grid stays usable when search is rate-limiting or 5xx-ing.
@@ -150,10 +172,11 @@ export async function searchProducts({
   page = 1,
   pageSize = DEFAULT_PAGE_SIZE,
 }: SearchProductsOptions = {}): Promise<SearchResult> {
-  // Cache key version bumped to v2 — v1 entries were poisoned by the broken /api/v2/search endpoint.
-  const cacheKey = `off:search:v2:${q ?? ""}:${category ?? ""}:${page}:${pageSize}`;
+  // v5 — empty-state grid now includes a quality clause so synthetic-barcode entries with no real
+  // image stop dominating the default view; cached v4 entries for the empty state are stale.
+  const cacheKey = `off:search:v5:${q ?? ""}:${category ?? ""}:${page}:${pageSize}`;
   const cached = await cacheGet<OFFSearchResponse>(cacheKey);
-  if (cached) return { data: cached.v, error: null };
+  if (cached) return { data: await withTrueCount(cached.v, q, category), error: null };
 
   const params = buildSearchParams(q, category, page, pageSize);
   const empty = { ...EMPTY_SEARCH, page, page_size: pageSize };
@@ -178,15 +201,58 @@ export async function searchProducts({
     const sal = (await res.json()) as SalResponse;
     const data: OFFSearchResponse = {
       count: sal.count ?? 0,
+      is_count_exact: sal.is_count_exact ?? true,
       page: sal.page ?? page,
       page_size: sal.page_size ?? pageSize,
       products: (sal.hits ?? []).map(mapHitToProduct),
     };
     await cacheSet(cacheKey, data, CACHE_TTL_SECONDS);
-    return { data, error: null };
+    return { data: await withTrueCount(data, q, category), error: null };
   } catch (err) {
     console.error("Open Food Facts search error:", err);
     return { data: empty, error: "unavailable" };
+  }
+}
+
+// Search-a-licious caps `count` at 10,000. When there's no free-text query we can ask the v2
+// API for the real total (v2 ignores `search_terms` but honours category tags). The override
+// happens at *read* time so a search response cached during a v2 outage still gets the true
+// count on the next read once v2 (or its 24h-cached value) is available.
+async function withTrueCount(
+  data: OFFSearchResponse,
+  q: string | undefined,
+  category: string | undefined,
+): Promise<OFFSearchResponse> {
+  if (q || data.is_count_exact) return data;
+  const trueCount = await getTrueCount(category);
+  if (trueCount == null) return data;
+  return { ...data, count: trueCount, is_count_exact: true };
+}
+
+// world v2 returns the real total even when search-a-licious caps at 10k. It silently ignores
+// free-text `search_terms` (per the comment on PRODUCT_API_URL above), so we only call it for
+// the no-text, optional-category case. Cached for 24h — the global total moves slowly.
+const TRUE_COUNT_TTL_SECONDS = 60 * 60 * 24;
+async function getTrueCount(category: string | undefined): Promise<number | null> {
+  const cacheKey = `off:truecount:v1:${category ?? ""}`;
+  const cached = await cacheGet<number>(cacheKey);
+  if (cached) return cached.v;
+
+  const params = new URLSearchParams({ fields: "code", page_size: "1" });
+  if (category) params.set("categories_tags_en", category);
+
+  try {
+    const res = await fetchOFF(
+      `${PRODUCT_API_URL}/api/v2/search?${params.toString()}`,
+      { headers: OFF_HEADERS, cache: "no-store" },
+    );
+    if (!res.ok) return null;
+    const body = (await res.json()) as { count?: number };
+    if (typeof body.count !== "number") return null;
+    await cacheSet(cacheKey, body.count, TRUE_COUNT_TTL_SECONDS);
+    return body.count;
+  } catch {
+    return null;
   }
 }
 
@@ -200,7 +266,8 @@ interface ProductEnvelope {
 // Returns null for genuine 404s; rethrows other failures so the product route falls through to error.tsx.
 // Confirmed-null lookups are cached so we don't hammer OFF for known-missing barcodes.
 export async function getProduct(barcode: string): Promise<OFFProduct | null> {
-  const cacheKey = `off:product:v1:${barcode}`;
+  // v2 — image_url is now rewritten to world.openfoodfacts.org at the boundary.
+  const cacheKey = `off:product:v2:${barcode}`;
   const cached = await cacheGet<OFFProduct | null>(cacheKey);
   if (cached) return cached.v;
 
@@ -225,7 +292,10 @@ export async function getProduct(barcode: string): Promise<OFFProduct | null> {
   }
 
   const data = (await res.json()) as ProductEnvelope;
-  const product = data.status === 0 || !data.product ? null : data.product;
+  const raw = data.status === 0 || !data.product ? null : data.product;
+  const product = raw
+    ? { ...raw, image_url: normalizeImageUrl(raw.image_url) }
+    : null;
   await cacheSet<OFFProduct | null>(cacheKey, product, CACHE_TTL_SECONDS);
   return product;
 }

@@ -26,7 +26,7 @@ export default async function HomePage({
   const category = pickString(params.category);
 
   const {
-    data: { products, count },
+    data: { products, count, is_count_exact: isCountExact },
     error,
   } = await searchProducts({ q, category });
 
@@ -49,7 +49,8 @@ export default async function HomePage({
       </Suspense>
 
       <p className="text-xs text-zinc-500">
-        {count.toLocaleString()} products
+        {count.toLocaleString()}
+        {isCountExact === false ? "+" : ""} products
         {q ? ` matching “${q}”` : ""}
         {category ? ` in ${category}` : ""}
       </p>

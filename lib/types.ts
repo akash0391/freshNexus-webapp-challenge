@@ -22,6 +22,8 @@ export interface OFFProduct {
 
 export interface OFFSearchResponse {
   count: number;
+  // false when search-a-licious truncated `count` at its 10,000-result cap.
+  is_count_exact?: boolean;
   page: number;
   page_size: number;
   products: OFFProduct[];
