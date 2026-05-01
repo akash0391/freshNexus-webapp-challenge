@@ -68,6 +68,7 @@ export interface SearchProductsOptions {
   pageSize?: number;
 }
 
+// Soft-fails to an empty result so the discover grid stays usable when OFF is rate-limiting or 5xx-ing.
 export async function searchProducts({
   q,
   category,
@@ -113,6 +114,7 @@ interface ProductEnvelope {
   product?: OFFProduct;
 }
 
+// Returns null for genuine 404s; rethrows other failures so the product route falls through to error.tsx.
 export async function getProduct(barcode: string): Promise<OFFProduct | null> {
   const params = new URLSearchParams({ fields: PRODUCT_FIELDS });
   const url = `${BASE_URL}/api/v2/product/${encodeURIComponent(

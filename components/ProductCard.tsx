@@ -1,19 +1,10 @@
 import Image from "next/image";
 import Link from "next/link";
-import type { OFFProduct, NutriScoreGrade } from "@/lib/types";
-
-const NUTRISCORE_STYLES: Record<NutriScoreGrade, string> = {
-  a: "bg-green-600 text-white",
-  b: "bg-lime-600 text-white",
-  c: "bg-yellow-400 text-black",
-  d: "bg-orange-500 text-white",
-  e: "bg-red-600 text-white",
-  unknown: "bg-zinc-300 text-black",
-};
+import { NUTRISCORE_STYLES, nutriScoreLabel } from "@/lib/nutriscore";
+import type { NutriScoreGrade, OFFProduct } from "@/lib/types";
 
 function NutriScoreBadge({ grade }: { grade?: NutriScoreGrade }) {
-  const resolved: NutriScoreGrade = grade ?? "unknown";
-  const label = resolved === "unknown" ? "?" : resolved.toUpperCase();
+  const { grade: resolved, label } = nutriScoreLabel(grade);
   return (
     <span
       className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${NUTRISCORE_STYLES[resolved]}`}

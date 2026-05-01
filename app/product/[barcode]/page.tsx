@@ -4,20 +4,12 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { IngredientList } from "@/components/IngredientList";
 import { Nutriments } from "@/components/Nutriments";
+import { NUTRISCORE_STYLES, nutriScoreLabel } from "@/lib/nutriscore";
 import { getProduct } from "@/lib/openFoodFacts";
-import type { NutriScoreGrade, OFFProduct } from "@/lib/types";
+import type { OFFProduct } from "@/lib/types";
 
 type Props = {
   params: Promise<{ barcode: string }>;
-};
-
-const NUTRISCORE_STYLES: Record<NutriScoreGrade, string> = {
-  a: "bg-green-600 text-white",
-  b: "bg-lime-600 text-white",
-  c: "bg-yellow-400 text-black",
-  d: "bg-orange-500 text-white",
-  e: "bg-red-600 text-white",
-  unknown: "bg-zinc-300 text-black",
 };
 
 function categoryLabels(tags: string[] | undefined, max = 3): string[] {
@@ -81,8 +73,7 @@ export default async function ProductPage({ params }: Props) {
 
   const name = product.product_name?.trim() || `Product ${barcode}`;
   const brand = product.brands?.split(",")[0]?.trim();
-  const grade: NutriScoreGrade = product.nutriscore_grade ?? "unknown";
-  const gradeLabel = grade === "unknown" ? "?" : grade.toUpperCase();
+  const { grade, label: gradeLabel } = nutriScoreLabel(product.nutriscore_grade);
   const labels = categoryLabels(product.categories_tags, 6);
 
   return (
