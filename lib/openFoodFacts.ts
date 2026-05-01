@@ -1,7 +1,8 @@
+import { cacheGet, cacheSet } from "./redis";
 import type { OFFProduct, OFFSearchResponse } from "./types";
 
 const BASE_URL = "https://world.openfoodfacts.org";
-const REVALIDATE_SECONDS = 3600;
+const CACHE_TTL_SECONDS = 60 * 30;
 const DEFAULT_PAGE_SIZE = 24;
 const MAX_RETRIES = 2;
 const BASE_BACKOFF_MS = 500;
@@ -43,10 +44,7 @@ function parseRetryAfter(header: string | null): number | null {
   return null;
 }
 
-async function fetchOFF(
-  url: string,
-  init: RequestInit & { next?: { revalidate?: number } },
-): Promise<Response> {
+async function fetchOFF(url: string, init: RequestInit): Promise<Response> {
   let attempt = 0;
   while (true) {
     const res = await fetch(url, init);
@@ -69,12 +67,17 @@ export interface SearchProductsOptions {
 }
 
 // Soft-fails to an empty result so the discover grid stays usable when OFF is rate-limiting or 5xx-ing.
+// Wraps the OFF call in a 30-min Upstash Redis cache; failure paths are intentionally NOT cached.
 export async function searchProducts({
   q,
   category,
   page = 1,
   pageSize = DEFAULT_PAGE_SIZE,
 }: SearchProductsOptions = {}): Promise<OFFSearchResponse> {
+  const cacheKey = `off:search:v1:${q ?? ""}:${category ?? ""}:${page}:${pageSize}`;
+  const cached = await cacheGet<OFFSearchResponse>(cacheKey);
+  if (cached) return cached.v;
+
   const params = new URLSearchParams();
   if (q) params.set("search_terms", q);
   if (category) params.set("categories_tags_en", category);
@@ -85,8 +88,7 @@ export async function searchProducts({
   try {
     const res = await fetchOFF(`${BASE_URL}/api/v2/search?${params.toString()}`, {
       headers: OFF_HEADERS,
-      cache: "force-cache",
-      next: { revalidate: REVALIDATE_SECONDS },
+      cache: "no-store",
     });
 
     if (res.status === 429) {
@@ -100,7 +102,9 @@ export async function searchProducts({
       );
     }
 
-    return (await res.json()) as OFFSearchResponse;
+    const data = (await res.json()) as OFFSearchResponse;
+    await cacheSet(cacheKey, data, CACHE_TTL_SECONDS);
+    return data;
   } catch (err) {
     console.error("Open Food Facts search error:", err);
     return { ...EMPTY_SEARCH, page, page_size: pageSize };
@@ -115,7 +119,12 @@ interface ProductEnvelope {
 }
 
 // Returns null for genuine 404s; rethrows other failures so the product route falls through to error.tsx.
+// Confirmed-null lookups are cached so we don't hammer OFF for known-missing barcodes.
 export async function getProduct(barcode: string): Promise<OFFProduct | null> {
+  const cacheKey = `off:product:v1:${barcode}`;
+  const cached = await cacheGet<OFFProduct | null>(cacheKey);
+  if (cached) return cached.v;
+
   const params = new URLSearchParams({ fields: PRODUCT_FIELDS });
   const url = `${BASE_URL}/api/v2/product/${encodeURIComponent(
     barcode,
@@ -123,11 +132,13 @@ export async function getProduct(barcode: string): Promise<OFFProduct | null> {
 
   const res = await fetchOFF(url, {
     headers: OFF_HEADERS,
-    cache: "force-cache",
-    next: { revalidate: REVALIDATE_SECONDS },
+    cache: "no-store",
   });
 
-  if (res.status === 404) return null;
+  if (res.status === 404) {
+    await cacheSet<OFFProduct | null>(cacheKey, null, CACHE_TTL_SECONDS);
+    return null;
+  }
   if (!res.ok) {
     throw new Error(
       `Open Food Facts product fetch failed: ${res.status} ${res.statusText}`,
@@ -135,6 +146,7 @@ export async function getProduct(barcode: string): Promise<OFFProduct | null> {
   }
 
   const data = (await res.json()) as ProductEnvelope;
-  if (data.status === 0 || !data.product) return null;
-  return data.product;
+  const product = data.status === 0 || !data.product ? null : data.product;
+  await cacheSet<OFFProduct | null>(cacheKey, product, CACHE_TTL_SECONDS);
+  return product;
 }
