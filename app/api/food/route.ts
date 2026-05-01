@@ -8,6 +8,12 @@ export async function GET(req: NextRequest) {
   const page = Number(sp.get("page") ?? "1") || 1;
   const pageSize = Number(sp.get("pageSize") ?? "24") || 24;
 
-  const data = await searchProducts({ q, category, page, pageSize });
-  return NextResponse.json(data);
+  const result = await searchProducts({ q, category, page, pageSize });
+  if (result.error) {
+    return NextResponse.json(
+      { ...result.data, error: result.error },
+      { status: 503 },
+    );
+  }
+  return NextResponse.json(result.data);
 }

@@ -66,17 +66,26 @@ export interface SearchProductsOptions {
   pageSize?: number;
 }
 
+export type SearchError = "rate-limited" | "unavailable" | null;
+
+export interface SearchResult {
+  data: OFFSearchResponse;
+  error: SearchError;
+}
+
 // Soft-fails to an empty result so the discover grid stays usable when OFF is rate-limiting or 5xx-ing.
-// Wraps the OFF call in a 30-min Upstash Redis cache; failure paths are intentionally NOT cached.
+// The `error` discriminator lets callers distinguish a real empty result from an upstream failure
+// (so the UI can offer a Retry instead of "No products found").
+// Only successful responses are cached — failure paths intentionally bypass cacheSet.
 export async function searchProducts({
   q,
   category,
   page = 1,
   pageSize = DEFAULT_PAGE_SIZE,
-}: SearchProductsOptions = {}): Promise<OFFSearchResponse> {
+}: SearchProductsOptions = {}): Promise<SearchResult> {
   const cacheKey = `off:search:v1:${q ?? ""}:${category ?? ""}:${page}:${pageSize}`;
   const cached = await cacheGet<OFFSearchResponse>(cacheKey);
-  if (cached) return cached.v;
+  if (cached) return { data: cached.v, error: null };
 
   const params = new URLSearchParams();
   if (q) params.set("search_terms", q);
@@ -84,6 +93,8 @@ export async function searchProducts({
   params.set("page", String(page));
   params.set("page_size", String(pageSize));
   params.set("fields", PRODUCT_FIELDS);
+
+  const empty = { ...EMPTY_SEARCH, page, page_size: pageSize };
 
   try {
     const res = await fetchOFF(`${BASE_URL}/api/v2/search?${params.toString()}`, {
@@ -93,7 +104,7 @@ export async function searchProducts({
 
     if (res.status === 429) {
       console.warn("Open Food Facts search rate-limited; serving empty results");
-      return { ...EMPTY_SEARCH, page, page_size: pageSize };
+      return { data: empty, error: "rate-limited" };
     }
 
     if (!res.ok) {
@@ -104,10 +115,10 @@ export async function searchProducts({
 
     const data = (await res.json()) as OFFSearchResponse;
     await cacheSet(cacheKey, data, CACHE_TTL_SECONDS);
-    return data;
+    return { data, error: null };
   } catch (err) {
     console.error("Open Food Facts search error:", err);
-    return { ...EMPTY_SEARCH, page, page_size: pageSize };
+    return { data: empty, error: "unavailable" };
   }
 }
 

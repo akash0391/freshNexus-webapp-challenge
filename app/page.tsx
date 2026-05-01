@@ -25,7 +25,10 @@ export default async function HomePage({
   const q = pickString(params.q);
   const category = pickString(params.category);
 
-  const { products, count } = await searchProducts({ q, category });
+  const {
+    data: { products, count },
+    error,
+  } = await searchProducts({ q, category });
 
   return (
     <div className="flex flex-col gap-6">
@@ -55,6 +58,7 @@ export default async function HomePage({
         key={`${q ?? ""}::${category ?? ""}`}
         initialProducts={products}
         totalCount={count}
+        initialError={error}
         q={q}
         category={category}
       />
