@@ -4,6 +4,10 @@ const BASE_URL = "https://world.openfoodfacts.org";
 const REVALIDATE_SECONDS = 3600;
 const DEFAULT_PAGE_SIZE = 24;
 
+const OFF_HEADERS = {
+  "User-Agent": "FreshNexus/0.1 (https://github.com/freshnexus)",
+};
+
 const PRODUCT_FIELDS = [
   "code",
   "product_name",
@@ -36,6 +40,7 @@ export async function searchProducts({
   params.set("fields", PRODUCT_FIELDS);
 
   const res = await fetch(`${BASE_URL}/api/v2/search?${params.toString()}`, {
+    headers: OFF_HEADERS,
     next: { revalidate: REVALIDATE_SECONDS },
   });
 
@@ -62,6 +67,7 @@ export async function getProduct(barcode: string): Promise<OFFProduct | null> {
   )}.json?${params.toString()}`;
 
   const res = await fetch(url, {
+    headers: OFF_HEADERS,
     next: { revalidate: REVALIDATE_SECONDS },
   });
 
