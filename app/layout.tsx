@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Geist, Geist_Mono } from "next/font/google";
+import { SITE_URL } from "@/lib/site";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -14,6 +15,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(SITE_URL),
   title: {
     template: "%s | FreshNexus",
     default: "FreshNexus — Discover food products and market insights",
@@ -26,6 +28,10 @@ export const metadata: Metadata = {
       "Search Open Food Facts for products, inspect nutrition and ingredients, and track live market signals.",
     siteName: "FreshNexus",
     type: "website",
+    url: SITE_URL,
+  },
+  alternates: {
+    canonical: "/",
   },
 };
 
