@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { CategoryFilter } from "@/components/CategoryFilter";
-import { ProductGrid } from "@/components/ProductGrid";
+import { InfiniteProductList } from "@/components/InfiniteProductList";
 import { SearchBar } from "@/components/SearchBar";
 import { searchProducts } from "@/lib/openFoodFacts";
 
@@ -51,7 +51,13 @@ export default async function HomePage({
         {category ? ` in ${category}` : ""}
       </p>
 
-      <ProductGrid products={products} />
+      <InfiniteProductList
+        key={`${q ?? ""}::${category ?? ""}`}
+        initialProducts={products}
+        totalCount={count}
+        q={q}
+        category={category}
+      />
     </div>
   );
 }
